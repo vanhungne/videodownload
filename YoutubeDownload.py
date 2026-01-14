@@ -55,6 +55,20 @@ def _has_416(err: Exception) -> bool:
     msg = repr(err).lower()
     return ("requested range not satisfiable" in msg) or ("http error 416" in msg)
 
+def _is_valid_netscape_cookie(p: Path) -> bool:
+    """Kiểm tra xem file có đúng định dạng Netscape cookie hay không."""
+    if not p or not p.exists() or not p.is_file():
+        return False
+    try:
+        if p.stat().st_size == 0:
+            return False
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            first_line = f.readline()
+            # File Netscape cookie chuẩn luôn bắt đầu bằng # Netscape HTTP Cookie File
+            return "# Netscape HTTP Cookie File" in first_line
+    except Exception:
+        return False
+
 def _sanitize_yt_watch_url(u: str) -> str:
     """
     Làm sạch tham số thời gian (&t=, ?t=, &start=, &time_continue=, &si=...) khỏi URL YouTube.
@@ -269,11 +283,11 @@ _YDL_EXPAND_OPTS = {
     "extract_flat": True,      # lấy danh sách nhanh, không tải metadata nặng
     "noplaylist": False,
     "lazy_playlist": False,
-    # ✅ ép dùng web client cho YouTube ngay từ bước expand (tránh PO Token)
+    # ✅ TV Embedded không cần PO Token
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "web_embedded"],
-            "player_skip": ["web_creator", "android", "ios", "tv", "tv_embedded", "mediaconnect"]
+            "player_client": ["tv_embedded", "android_vr", "mweb"],
+            "player_skip": ["android", "ios", "web_creator", "mediaconnect", "tv", "web"]
         }
     }
 }
@@ -373,8 +387,8 @@ def get_video_title(url: str) -> str | None:
             "skip_download": True,
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["web", "web_embedded"],
-                    "player_skip": ["web_creator", "android", "ios", "tv", "tv_embedded", "mediaconnect"]
+                    "player_client": ["tv_embedded", "android_vr", "mweb"],
+                    "player_skip": ["android", "ios", "web_creator", "tv", "web", "mediaconnect"]
                 }
             }
         }
@@ -393,6 +407,14 @@ def expand_url_to_videos(u: str) -> List[str]:
     try:
         if not looks_like_playlist_or_channel(u):
             return [u]
+
+        # ✅ Skip YouTube Mix/Radio playlists (RD..., RDMM..., RDAO..., etc.)
+        # Những playlist này do YouTube tạo tự động và không thể expand
+        if "list=" in u:
+            match = re.search(r"[?&]list=(RD[A-Za-z0-9_\-]+)", u)
+            if match:
+                # Đây là Mix/Radio playlist, không thể expand → trả về URL gốc
+                return [u]
 
         # Lúc này chắc chắn là YouTube
         if "list=" in u or "/playlist" in u:
@@ -692,20 +714,25 @@ class DownloadWorker(QThread):
         # ✅ Tối ưu extractor_args cho tất cả nền tảng - không cần cookies
         extractor_args = {}
         
-        # YouTube: strategy phụ thuộc có cookie hay không
+        # YouTube: Strategy - Cookies vs No-Cookies (Fixed)
         if is_yt:
-            if COOKIE_FILE.exists():
-                # Có cookie: dùng ios/android client (bypass nsig/SABR tốt hơn)
+            has_valid_cookie = _is_valid_netscape_cookie(COOKIE_FILE)
+            
+            if has_valid_cookie:
+                # ⚠️ TV Embedded + Cookies = HTTP 400
+                # → Dùng mweb (mobile web) - ít bị chặn và hỗ trợ cookies
                 extractor_args["youtube"] = {
-                    "player_client": ["ios", "android", "web"],
-                    "player_skip": ["web_creator", "tv", "tv_embedded", "mediaconnect"]
+                    "player_client": ["mweb", "web"],
+                    "player_skip": ["android", "ios", "tv_embedded", "android_vr", "web_creator", "tv", "mediaconnect"]
                 }
+                self.log.emit(f"[{self.row}] 🍪 YouTube: Using cookies with mweb client.")
             else:
-                # Không cookie: dùng web client
+                # Không cookies: Dùng tv_embedded (bypass tốt, không cần PO Token)
                 extractor_args["youtube"] = {
-                    "player_client": ["web", "web_embedded"],
-                    "player_skip": ["web_creator", "ios", "android", "tv", "tv_embedded", "mediaconnect"]
+                    "player_client": ["tv_embedded", "android_vr", "mweb"],
+                    "player_skip": ["android", "ios", "web", "web_creator", "tv", "mediaconnect"]
                 }
+                self.log.emit(f"[{self.row}] ℹ️ YouTube: Using tv_embedded (no cookies).")
         
         # TikTok: không cần extractor_args đặc biệt, để yt-dlp tự động xử lý
         if is_tt:
@@ -761,24 +788,31 @@ class DownloadWorker(QThread):
             base_tpl = "%(title).190B [%(id)s]" if self.per_folder else "%(title)s"
             outtmpl = str(target_dir / f"{base_tpl}.%(ext)s")
 
+        # ✅ TẮT HOÀN TOÀN tính năng impersonate vì gây lỗi trên một số máy
+        # Ngay cả khi có curl-cffi, yt-dlp có thể không tương thích
+        has_impersonate = False
+
         # ---- yt-dlp options core ----
         opts: dict[str, Any] = {
             "outtmpl": outtmpl,
             "format": desired_fmt,
             "quiet": True,
             "noprogress": True,
+            "ignoreerrors": True, # Tiếp tục tải nếu có 1 video trong danh sách bị lỗi
 
-            # Network / độ ổn định
-            "retries": 10,
-            "fragment_retries": 10,
-            "concurrent_fragment_downloads": 4,
-            "http_chunk_size": 10 * 1024 * 1024,
+            # Network / độ ổn định / Tối ưu né chặn
+            "retries": 15,
+            "fragment_retries": 15,
+            "concurrent_fragment_downloads": 2 if is_yt else 5, 
+            "socket_timeout": 30, # Chờ lâu hơn một chút để tránh rớt mạng
+            "file_access_retries": 5,
 
             "geo_bypass": True,
             "geo_bypass_country": "US",
             "http_headers": headers,
             "extractor_args": extractor_args,
-
+            # ✅ TẮT impersonate vì gây lỗi 100% trên một số máy
+            # "impersonate": "chrome" if (has_impersonate and (is_yt or is_tt)) else None,
             "windowsfilenames": True,
             "trim_file_name": 180,
             "format_sort": ["res:2160,1440,1080,720,480,360", "fps", "hdr:12", "codec:avc1,h264,vp9,av01"],
@@ -788,22 +822,23 @@ class DownloadWorker(QThread):
             "progress_hooks": [self._hook],
         }
 
-        # ✅ Cookie handling: Platform-specific cookie files to avoid errors
+        # ✅ Cookie handling: Chỉ dùng nếu file hợp lệ (Netscape format)
         # YouTube: cookies.txt file (for SABR, nsig, age-restricted videos)
-        if is_yt and COOKIE_FILE.exists():
+        if is_yt and _is_valid_netscape_cookie(COOKIE_FILE):
             try:
                 opts["cookiefile"] = str(COOKIE_FILE)
-                self.log.emit(f"[{self.row}] 🍪 YouTube: Using cookies from {COOKIE_FILE}")
             except Exception:
                 pass
         
         # Instagram: instagram_cookies.txt file (for login required & rate-limit)
-        if is_ig and INSTAGRAM_COOKIE_FILE.exists():
+        if is_ig and _is_valid_netscape_cookie(INSTAGRAM_COOKIE_FILE):
             try:
                 opts["cookiefile"] = str(INSTAGRAM_COOKIE_FILE)
-                self.log.emit(f"[{self.row}] 🍪 Instagram: Using cookies from {INSTAGRAM_COOKIE_FILE}")
+                self.log.emit(f"[{self.row}] 🍪 Instagram: Using validated cookies.")
             except Exception:
                 pass
+        elif is_ig and INSTAGRAM_COOKIE_FILE.exists():
+            self.log.emit(f"[{self.row}] ⚠️ Instagram: cookies invalid format, ignoring.")
 
         # ---- FFmpeg & postprocessors ----
         if have_ffmpeg:
@@ -966,6 +1001,15 @@ class DownloadWorker(QThread):
                 # YouTube: 403 Forbidden
                 if "403" in msg and "forbidden" in msg:
                     self.log.emit(f"[{self.row}] ⚠️ YouTube: 403 Forbidden → Giải pháp: 1) Import cookies (🍪) 2) pip install -U yt-dlp")
+                
+                # Impersonate error
+                if "Impersonate target" in msg:
+                    self.log.emit(f"[{self.row}] ⚠️ Lỗi giả lập trình duyệt. Đang tự động tắt để tải bình thường...")
+                    # Tắt impersonate cho các lần retry sau
+                    if "impersonate" in opts:
+                        opts["impersonate"] = None
+                    if "impersonate" in opts4:
+                        opts4["impersonate"] = None
                 
                 # Format not available
                 if ("only images are available" in msg) or ("format is not available" in msg):
@@ -1207,7 +1251,7 @@ class DownloadWorker(QThread):
                 opts_ios["format"] = "best"
                 opts_ios["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["ios", "android"],
+                        "player_client": ["android", "ios"],
                         "player_skip": ["web", "web_creator", "web_embedded", "tv", "tv_embedded", "mediaconnect"]
                     }
                 }
