@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# PyInstaller and build artifacts
+*.spec
+build/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Output videos, archives, binaries, logs
+Output/
+*.mp4
+*.mp3
+*.rar
+*.zip
+*.exe
+ffmpeg/
+*.log
+
+# Python caches
+*.pyc
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Sensitive files
+credentials.json
+app.log

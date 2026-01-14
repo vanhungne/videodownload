@@ -1,0 +1,19 @@
+REM 1) Tạo venv bằng bản Python đang có (3.13)
+py -3.13 -m venv .venv
+
+REM 2) Cài công cụ build vào venv
+.\.venv\Scripts\python -m pip install -U pip wheel setuptools
+.\.venv\Scripts\python -m pip install PyInstaller PySide6 yt-dlp google-api-python-client google-auth-oauthlib certifi
+
+.\.venv\Scripts\python -m PyInstaller ^
+  --noconfirm --clean --windowed ^
+  --name "YoutubeDownload" ^
+  --icon "icon.ico" ^
+  --collect-all PySide6 ^
+  --collect-all yt_dlp ^
+  --collect-all googleapiclient ^
+  --collect-all google.oauth2 ^
+  --collect-all google_auth_oauthlib ^
+  --add-binary "ffmpeg\ffmpeg.exe;." ^
+  --add-data "icon.ico;." ^
+  YoutubeDownload.py
