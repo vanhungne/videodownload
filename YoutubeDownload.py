@@ -1440,28 +1440,55 @@ class LicenseDialog(QDialog):
         self.setModal(True)
         self.resize(700, 360)
 
-        # ---- Styles: tăng tương phản, font monospace cho token ---
-        self.setStyleSheet("""
-        QDialog { background: #F7F8FA; }
-        QLabel#Title    { color:#0F172A; font-weight:700; font-size:14px; }
-        QLabel#Reason   { color:#374151; font-size:13px; }
-        QLabel#DidTitle { color:#111827; font-weight:600; }
-        QLineEdit[readOnly="true"]{
-            background:#FFFFFF; color:#111827; border:1px solid #CBD5E1;
-            padding:8px 10px; border-radius:8px; font-size:13px;
-        }
-        QTextEdit{
-            background:#FFFFFF; color:#111827; border:1px solid #CBD5E1;
-            padding:10px; border-radius:10px; font-size:13px;
-            font-family: Consolas, 'Courier New', monospace;
-        }
-        QPushButton {
-            background:#111827; color:white; border:0; border-radius:10px;
-            padding:8px 14px; font-weight:600;
-        }
-        QPushButton:hover { filter: brightness(1.08); }
-        QPushButton#Secondary { background:#4B5563; }
-        """)
+        # ---- Styles: áp dụng theme từ parent nếu có, nếu không thì dùng light theme ---
+        is_dark = False
+        if parent and hasattr(parent, "theme"):
+            is_dark = getattr(parent, "theme", "light") == "dark"
+        
+        if is_dark:
+            self.setStyleSheet("""
+            QDialog { background-color: #020617; color: #e5e7eb; }
+            QLabel#Title    { color:#e5e7eb; font-weight:700; font-size:14px; }
+            QLabel#Reason   { color:#9ca3af; font-size:13px; }
+            QLabel#DidTitle { color:#e5e7eb; font-weight:600; }
+            QLineEdit[readOnly="true"]{
+                background-color:#020617; color:#e5e7eb; border:1px solid #374151;
+                padding:8px 10px; border-radius:8px; font-size:13px;
+            }
+            QTextEdit{
+                background-color:#020617; color:#e5e7eb; border:1px solid #374151;
+                padding:10px; border-radius:10px; font-size:13px;
+                font-family: Consolas, 'Courier New', monospace;
+            }
+            QPushButton {
+                background-color:#1f2937; color:#e5e7eb; border:0; border-radius:10px;
+                padding:8px 14px; font-weight:600;
+            }
+            QPushButton:hover { background-color:#4b5563; }
+            QPushButton#Secondary { background-color:#374151; }
+            """)
+        else:
+            self.setStyleSheet("""
+            QDialog { background: #F7F8FA; }
+            QLabel#Title    { color:#0F172A; font-weight:700; font-size:14px; }
+            QLabel#Reason   { color:#374151; font-size:13px; }
+            QLabel#DidTitle { color:#111827; font-weight:600; }
+            QLineEdit[readOnly="true"]{
+                background:#FFFFFF; color:#111827; border:1px solid #CBD5E1;
+                padding:8px 10px; border-radius:8px; font-size:13px;
+            }
+            QTextEdit{
+                background:#FFFFFF; color:#111827; border:1px solid #CBD5E1;
+                padding:10px; border-radius:10px; font-size:13px;
+                font-family: Consolas, 'Courier New', monospace;
+            }
+            QPushButton {
+                background:#111827; color:white; border:0; border-radius:10px;
+                padding:8px 14px; font-weight:600;
+            }
+            QPushButton:hover { filter: brightness(1.08); }
+            QPushButton#Secondary { background:#4B5563; }
+            """)
 
         # ---- lấy Device ID ----
         did = device_id
@@ -1533,13 +1560,19 @@ class LicenseDialog(QDialog):
     def _on_save(self):
         t = (self.txt.toPlainText() or "").replace("\r", "").replace("\n", "").strip()
         if not t:
-            QMessageBox.information(self, "Info", "Chưa có token.")
+            if hasattr(self.parent(), "_show_message"):
+                self.parent()._show_message(QMessageBox.Information, "Info", "Chưa có token.")
+            else:
+                QMessageBox.information(self, "Info", "Chưa có token.")
             return
         try:
             save_token_text(t)
             self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Save failed", str(e))
+            if hasattr(self.parent(), "_show_message"):
+                self.parent()._show_message(QMessageBox.Critical, "Save failed", str(e))
+            else:
+                QMessageBox.critical(self, "Save failed", str(e))
 class QtLogHandler(logging.Handler):
     """Đẩy log vào hàm append_fn (ví dụ: self._append_log)."""
     def __init__(self, append_fn):
@@ -1635,11 +1668,11 @@ class MainWindow(QMainWindow):
             # Cho phép người dùng dán token và lưu, sau đó kiểm tra lại 1 lần
             dlg = LicenseDialog(st.reason, self)
             if dlg.exec() != QDialog.Accepted:
-                QMessageBox.critical(self, "License", "Ứng dụng cần license để chạy.")
+                self._show_message(QMessageBox.Critical, "License", "Ứng dụng cần license để chạy.")
                 sys.exit(1)
             st2 = check_license()
             if not st2.ok:
-                QMessageBox.critical(self, "License", f"Token không hợp lệ:\n{st2.reason}")
+                self._show_message(QMessageBox.Critical, "License", f"Token không hợp lệ:\n{st2.reason}")
                 sys.exit(1)
 
         # Bạn có thể hiển thị chủ sở hữu & hạn dùng ở tiêu đề hoặc About
@@ -1767,6 +1800,8 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
         
         dialog = QDialog(self)
+        if hasattr(self, "_apply_dialog_theme"):
+            self._apply_dialog_theme(dialog)
         dialog.setWindowTitle("Import Cookies")
         layout = QVBoxLayout()
         
@@ -1838,8 +1873,8 @@ class MainWindow(QMainWindow):
                         f"• Access private/restricted content ✅"
                     )
                 
-                QMessageBox.information(
-                    self, 
+                self._show_message(
+                    QMessageBox.Information,
                     f"{platform_name} Cookie Import Success! 🍪", 
                     f"✅ **Cookie file imported successfully!**\n\n"
                     f"📍 Location: {target_file}\n"
@@ -1852,14 +1887,14 @@ class MainWindow(QMainWindow):
                 self.logger.info(f"{platform_name} cookie file imported: {target_file}")
                 self._toast(f"{platform_name} cookie imported! Click '🔄 Retry Fail' ✅", 4000)
             else:
-                QMessageBox.warning(
-                    self, 
+                self._show_message(
+                    QMessageBox.Warning,
                     "Cookie Import", 
                     "Cookie file is empty or invalid."
                 )
         except Exception as e:
-            QMessageBox.critical(
-                self, 
+            self._show_message(
+                QMessageBox.Critical,
                 "Cookie Import Failed", 
                 f"Failed to import cookie file:\n{e}"
             )
@@ -1911,8 +1946,9 @@ class MainWindow(QMainWindow):
             self._toast(f"Retrying {retry_count} failed download(s)...", 3000)
             self.logger.info(f"Retry failed: added {retry_count} downloads to queue")
     def _show_about(self):
-        QMessageBox.information(
-            self, "About",
+        self._show_message(
+            QMessageBox.Information,
+            "About",
             "Mỹ Duyên Downloader\n"
             "• PySide6 + yt-dlp\n"
             "• Google Sheets import\n"
@@ -1921,8 +1957,9 @@ class MainWindow(QMainWindow):
         )
 
     def _show_shortcuts(self):
-        QMessageBox.information(
-            self, "Shortcuts",
+        self._show_message(
+            QMessageBox.Information,
+            "Shortcuts",
             "Ctrl+T  — Toggle theme\n"
             "Context menu (Right-click on table) — Paste URLs / Explode / Remove"
         )
@@ -1931,8 +1968,8 @@ class MainWindow(QMainWindow):
         """Mở guide xử lý lỗi các nền tảng."""
         guide_path = APP_DIR / "YOUTUBE_ERRORS_GUIDE.md"
         if not guide_path.exists():
-            QMessageBox.information(
-                self, 
+            self._show_message(
+                QMessageBox.Information,
                 "Common Errors & Fixes",
                 "🔴 **YouTube Errors:**\n"
                 "• SABR/nsig/PO Token/403 Forbidden\n"
@@ -1975,7 +2012,7 @@ class MainWindow(QMainWindow):
                 os.system(f'xdg-open "{guide_path}"')
             self._toast("Opened YouTube Errors Guide", 2500)
         except Exception as e:
-            QMessageBox.warning(self, "Open Guide", f"Cannot open guide:\n{e}")
+            self._show_message(QMessageBox.Warning, "Open Guide", f"Cannot open guide:\n{e}")
     def _add_row(self, url, quality, filename_base=None, stt_text=None, from_collection=False):
         r = self.tbl.rowCount()
         self.tbl.insertRow(r)
@@ -2022,9 +2059,17 @@ class MainWindow(QMainWindow):
         self._update_stats()
 
     def _import_gsheet(self):
-        # hỏi URL sheet
-        sheet_url, ok = QInputDialog.getText(self, "Google Sheet", "Paste Google Sheet URL:")
-        if not ok or not sheet_url.strip():
+        # Hỏi URL Google Sheet bằng dialog riêng có áp dụng theme
+        dlg = QInputDialog(self)
+        dlg.setWindowTitle("Google Sheet")
+        dlg.setLabelText("Paste Google Sheet URL:")
+        dlg.setInputMode(QInputDialog.TextInput)
+        if hasattr(self, "_apply_dialog_theme"):
+            self._apply_dialog_theme(dlg)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        sheet_url = dlg.textValue().strip()
+        if not sheet_url:
             return
         # chọn credentials.json nếu chưa có
         cred_file = ensure_embedded_credentials()
@@ -2032,7 +2077,7 @@ class MainWindow(QMainWindow):
         if not Path(cred_path).exists():
             path, _ = QFileDialog.getOpenFileName(self, "Chọn credentials.json", "", "JSON (*.json)")
             if not path:
-                QMessageBox.warning(self, "Google Sheet", "Thiếu credentials.json")
+                self._show_message(QMessageBox.Warning, "Google Sheet", "Thiếu credentials.json")
                 return
             cred_path = path
 
@@ -2040,11 +2085,11 @@ class MainWindow(QMainWindow):
             self._set_status_all("Reading Sheet…")
             values = gs_get_values_from_url(sheet_url.strip(), cred_path)
         except Exception as e:
-            QMessageBox.critical(self, "Google Sheet", f"Lỗi đọc sheet:\n{e}")
+            self._show_message(QMessageBox.Critical, "Google Sheet", f"Lỗi đọc sheet:\n{e}")
             return
 
         if not values or len(values) < 2:
-            QMessageBox.information(self, "Google Sheet", "Không có dữ liệu (cần >= 2 hàng).")
+            self._show_message(QMessageBox.Information, "Google Sheet", "Không có dữ liệu (cần >= 2 hàng).")
             return
 
         # ✅ Map URL -> dict với stt_list
@@ -2123,9 +2168,9 @@ class MainWindow(QMainWindow):
 
         if added:
             # KHÔNG renumber để giữ nguyên STT (tên từ Sheet)
-            QMessageBox.information(self, "Google Sheet", f"Đã nhập {added} video từ Sheet.")
+            self._show_message(QMessageBox.Information, "Google Sheet", f"Đã nhập {added} video từ Sheet.")
         else:
-            QMessageBox.information(self, "Google Sheet", "Không tìm thấy URL hợp lệ.")
+            self._show_message(QMessageBox.Information, "Google Sheet", "Không tìm thấy URL hợp lệ.")
 
 
     def _set_status_all(self, text: str):
@@ -2171,7 +2216,7 @@ class MainWindow(QMainWindow):
                 self.logger.error("Uncaught exception", exc_info=(exctype, value, tb))
                 # vẫn hiển thị messagebox nhẹ nhàng nếu muốn:
                 try:
-                    QMessageBox.critical(self, "Lỗi không bắt", f"{exctype.__name__}: {value}")
+                    self._show_message(QMessageBox.Critical, "Lỗi không bắt", f"{exctype.__name__}: {value}")
                 except Exception:
                     pass
             sys.excepthook = _excepthook
@@ -2188,8 +2233,7 @@ class MainWindow(QMainWindow):
                 os.system(f'xdg-open "{p}"')
             self._toast(f"Opened: {p}", 3000)
         except Exception as e:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Open Log", str(e))
+            self._show_message(QMessageBox.Warning, "Open Log", str(e))
 
         # ---------- UI ----------
     def _build_ui(self):
@@ -2228,9 +2272,6 @@ class MainWindow(QMainWindow):
         btn_import = QPushButton("Import TXT"); btn_import.clicked.connect(self._import_txt); btn_import.setProperty("kind", "primary")
         btn_cookie = QPushButton("🍪 Import Cookie"); btn_cookie.clicked.connect(self._import_cookie); btn_cookie.setProperty("kind", "warning")
         btn_cookie.setToolTip("Import cookies for YouTube (SABR, nsig, age-restrict) or Instagram (login, rate-limit)")
-        
-        btn_help = QPushButton("❓ Help"); btn_help.clicked.connect(self._show_help); btn_help.setProperty("kind", "info")
-        btn_help.setToolTip("Troubleshooting guide for YouTube errors")
 
         self.btn_theme = QPushButton("🌙"); self.btn_theme.setFixedWidth(36)
         self.btn_theme.setToolTip("Toggle Dark/Light  (Ctrl+T)")
@@ -2241,7 +2282,7 @@ class MainWindow(QMainWindow):
 
         rowA.addWidget(btn_gsheet)
         rowA.addWidget(self.edt_url)
-        rowA.addWidget(btn_add); rowA.addWidget(btn_import); rowA.addWidget(btn_cookie); rowA.addWidget(btn_help)
+        rowA.addWidget(btn_add); rowA.addWidget(btn_import); rowA.addWidget(btn_cookie)
         rowA.addWidget(self.btn_theme)
         root.addLayout(rowA)
 
@@ -2289,7 +2330,6 @@ class MainWindow(QMainWindow):
         rowB.addWidget(self.spin_retries)
 
         # Options
-        self.chk_folder_thumb = QCheckBox("Thumbnail + Folder"); self.chk_folder_thumb.setChecked(False)
         self.chk_h264 = QCheckBox("H.264 (convert AV1)"); self.chk_h264.setChecked(False)
 
         # NEW: CheckAll / UncheckAll button for "Sel" column
@@ -2298,7 +2338,6 @@ class MainWindow(QMainWindow):
         btn_check_all.clicked.connect(lambda: self._set_all_checked(True))
         btn_uncheck_all.clicked.connect(lambda: self._set_all_checked(False))
 
-        rowB.addWidget(self.chk_folder_thumb)
         rowB.addWidget(self.chk_h264)
         rowB.addSpacing(12)
         rowB.addWidget(btn_check_all)
@@ -2309,26 +2348,17 @@ class MainWindow(QMainWindow):
         rowC = QHBoxLayout()
         self.btn_start  = QPushButton("▶ Start");   self.btn_start.clicked.connect(self.start_all);   self.btn_start.setProperty("kind", "primary")
         self.btn_pause  = QPushButton("⏸ Pause");   self.btn_pause.clicked.connect(self.pause_all);    self.btn_pause.setProperty("kind", "pause")
-        self.btn_resume = QPushButton("⏵ Resume");  self.btn_resume.clicked.connect(self.resume_all);  self.btn_resume.setProperty("kind", "resume")
-        self.btn_stop   = QPushButton("⏹ Stop Sel");self.btn_stop.clicked.connect(self.stop_selected); self.btn_stop.setProperty("kind", "danger")
-        btn_retry_fail  = QPushButton("🔄 Retry Fail"); btn_retry_fail.clicked.connect(self.retry_failed); btn_retry_fail.setProperty("kind", "warning")
-        btn_retry_fail.setToolTip("Retry all failed downloads and start immediately")
 
         btn_remove   = QPushButton("🗑 Remove Selected"); btn_remove.clicked.connect(self.remove_selected); btn_remove.setProperty("kind", "danger")
         btn_del_ok   = QPushButton("🧽 Delete Success");  btn_del_ok.clicked.connect(self.remove_success); btn_del_ok.setProperty("kind", "danger")
-        btn_clear    = QPushButton("🧹 Clear (idle only)"); btn_clear.clicked.connect(self.clear_all); btn_clear.setProperty("kind", "warning")
-        btn_clear_all= QPushButton("🧯 Clear ALL (Force)");  btn_clear_all.clicked.connect(self.clear_all_force); btn_clear_all.setProperty("kind", "danger")
+        btn_clear    = QPushButton("🧹 Clear"); btn_clear.clicked.connect(self.clear_all); btn_clear.setProperty("kind", "warning")
         btn_open     = QPushButton("📂 Open Output");     btn_open.clicked.connect(self._open_out);       btn_open.setProperty("kind", "success")
 
         rowC.addWidget(self.btn_start)
         rowC.addWidget(self.btn_pause)
-        rowC.addWidget(self.btn_resume)
-        rowC.addWidget(self.btn_stop)
-        rowC.addWidget(btn_retry_fail)
         rowC.addWidget(btn_remove)
         rowC.addWidget(btn_del_ok)
         rowC.addWidget(btn_clear)
-        rowC.addWidget(btn_clear_all)
         rowC.addStretch(1)
         rowC.addWidget(btn_open)
         root.addLayout(rowC)
@@ -2370,10 +2400,12 @@ class MainWindow(QMainWindow):
 
         self.tabs.addTab(logs_page, "Logs")
 
-        for btn in (btn_gsheet, btn_add, btn_import, btn_cookie, btn_help, self.btn_theme,
-                    self.btn_start, self.btn_pause, self.btn_resume, self.btn_stop, btn_retry_fail,
-                    btn_remove, btn_del_ok, btn_clear, btn_clear_all, btn_open, btn_browse,
-                    btn_open_log, btn_clear_log):
+        for btn in (
+            btn_gsheet, btn_add, btn_import, btn_cookie, self.btn_theme,
+            self.btn_start, self.btn_pause,
+            btn_remove, btn_del_ok, btn_clear, btn_open, btn_browse,
+            btn_open_log, btn_clear_log
+        ):
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
@@ -2434,6 +2466,60 @@ class MainWindow(QMainWindow):
 
         self._toast(f"Theme: {self.theme.capitalize()}", 2200)
 
+
+    def _apply_dialog_theme(self, dialog: QDialog):
+        """Áp dụng theme tối/sáng cho các dialog con để đồng bộ với main UI."""
+        if getattr(self, "theme", "dark") == "dark":
+            dialog.setStyleSheet(
+                """
+                QDialog { background-color: #020617; color: #e5e7eb; }
+                QLabel, QRadioButton { color: #e5e7eb; }
+                QLineEdit, QTextEdit {
+                    background-color: #020617;
+                    color: #e5e7eb;
+                    border: 1px solid #374151;
+                    border-radius: 6px;
+                    padding: 6px 8px;
+                }
+                QPushButton {
+                    background-color: #1f2937;
+                    color: #e5e7eb;
+                    border-radius: 8px;
+                    padding: 6px 14px;
+                }
+                QPushButton:hover {
+                    background-color: #4b5563;
+                }
+                """
+            )
+        else:
+            dialog.setStyleSheet("")
+    
+    def _show_message(self, icon, title: str, text: str):
+        """Hiển thị QMessageBox với theme đúng."""
+        msg = QMessageBox(icon, title, text, QMessageBox.Ok, self)
+        if getattr(self, "theme", "dark") == "dark":
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #020617;
+                    color: #e5e7eb;
+                }
+                QMessageBox QLabel {
+                    color: #e5e7eb;
+                    background-color: transparent;
+                }
+                QMessageBox QPushButton {
+                    background-color: #1f2937;
+                    color: #e5e7eb;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    min-width: 80px;
+                }
+                QMessageBox QPushButton:hover {
+                    background-color: #4b5563;
+                }
+            """)
+        return msg.exec()
 
     def toggle_theme(self):
         self.apply_theme("light" if self.theme == "dark" else "dark")
@@ -2638,7 +2724,7 @@ class MainWindow(QMainWindow):
 
     def clear_all(self):
         if self.is_running:
-            self._toast("Đang chạy — dùng 'Clear ALL (Force)' nếu muốn xoá hết.", 2500)
+            self._toast("Đang chạy — hãy dừng download trước khi Clear.", 2500)
             return
         self.tbl.setRowCount(0)
         self.pending_rows = queue.Queue()
@@ -2713,7 +2799,7 @@ class MainWindow(QMainWindow):
         meta  = self.row_meta.get(r, {})
         from_collection = bool(meta.get("from_collection", False))
 
-        per_folder  = bool(self.chk_folder_thumb.isChecked())
+        per_folder  = False
         convert_av1 = bool(self.chk_h264.isChecked())
         audio_only  = (meta.get("kind") == "sound")
 
@@ -2856,7 +2942,7 @@ class MainWindow(QMainWindow):
                 os.system(f'xdg-open "{p}"')
             self._toast(f"Opened: {p}", 3000)
         except Exception as e:
-            QMessageBox.warning(self, "Open Output", str(e))
+            self._show_message(QMessageBox.Warning, "Open Output", str(e))
 
 
 # ------------------------ main ------------------------
